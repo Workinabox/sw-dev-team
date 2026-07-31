@@ -64,6 +64,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Every test here is a plain function. Collecting no classes stops pytest trying
+# to collect domain models whose names begin with "Test" — TestReport is a
+# result-document model, not a test case.
+python_classes = []
 markers = [
     "live: requires ANTHROPIC_API_KEY and makes real model calls",
     "postgres: requires a reachable Postgres instance",
