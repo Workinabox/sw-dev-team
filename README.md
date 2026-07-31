@@ -17,7 +17,12 @@ Rust path remaining the default.
 ```sh
 make sync                       # uv sync --all-extras --dev
 make check                      # ruff + mypy + pytest
+make coverage                   # full report, gates the core modules at 98%
+make build                      # wheel + sdist into dist/
 ```
+
+Every one of those is exactly what CI runs, so a green `make check` locally means
+a green PR.
 
 Run a team against a repository, with no API key and no model calls:
 
@@ -54,6 +59,24 @@ bootstrap -> architect -+-> dev (one per work item) -+-> integrate -> tester_fin
   it, so it can reconcile both sides rather than re-raising the same conflict.
 - **tester_final** runs the suite. A failure sends the developers back.
 - Both retry loops are bounded by config, so a run always terminates.
+
+## Releasing
+
+The version comes from the git tag — there is no version literal to bump, and the
+wheel can never disagree with the tag.
+
+```sh
+git tag -a v0.2.0 -m "Release v0.2.0" && git push origin v0.2.0
+```
+
+That publishes a wheel, an sdist, and their `.sha256` files to a GitHub release
+with generated notes. Assets keep their canonical Python filenames rather than
+the `<name>-v<version>-<target>` convention the other repos use, because `pip`
+and `uv` parse the wheel name to resolve an install.
+
+`iac/images/team/build.sh` installs a released wheel by default, so the container
+images are built from a pinned artifact. Set `TEAM_SRC` to build from a local
+checkout instead.
 
 ## Documentation
 
