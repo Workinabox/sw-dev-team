@@ -18,8 +18,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -40,8 +42,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -62,8 +66,10 @@ jobs:
       # `git init --initial-branch` requires.
       - uses: actions/checkout@v4
 
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -84,8 +90,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
@@ -111,8 +119,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
