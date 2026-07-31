@@ -1,6 +1,9 @@
 [project]
 name = "wiab-team"
-version = "0.1.0"
+# Derived from the git tag by hatch-vcs, so the wheel filename and the tag can
+# never disagree — a Python wheel bakes its version in at build time, unlike the
+# Rust and Node repos whose workflows construct the asset name from the tag.
+dynamic = ["version"]
 description = "A software development team of agents delivering features"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -25,14 +28,18 @@ wiab-team = "wiab_team.cli:app"
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "ruff>=0.8",
     "mypy>=1.13",
     "respx>=0.22",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wiab_team"]
