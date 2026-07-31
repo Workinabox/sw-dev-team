@@ -1,0 +1,63 @@
+[project]
+name = "wiab-team"
+version = "0.1.0"
+description = "A software development team of agents delivering features"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+
+dependencies = [
+    "langgraph>=0.2.60",
+    "pydantic>=2.9",
+    "typer>=0.15",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+claude = ["claude-agent-sdk>=0.1.0"]
+postgres = ["langgraph-checkpoint-postgres>=2.0.0", "psycopg[binary]>=3.2"]
+forge = ["httpx>=0.28"]
+
+[project.scripts]
+wiab-team = "wiab_team.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "respx>=0.22",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wiab_team"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+# Third-party packages without shipped stubs.
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "claude_agent_sdk.*", "structlog.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "live: requires ANTHROPIC_API_KEY and makes real model calls",
+    "postgres: requires a reachable Postgres instance",
+]
