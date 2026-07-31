@@ -74,6 +74,24 @@ def test_dev_count_is_bounded(monkeypatch: pytest.MonkeyPatch, value: str) -> No
         load()
 
 
+def test_bad_global_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The global default is validated too, not just the per-role overrides."""
+    monkeypatch.setenv("WIAB_TEAM_TOOL_PROVIDER", "stub")
+    monkeypatch.setenv("WIAB_TEAM_EFFORT", "ludicrous")
+    with pytest.raises(ConfigError, match="WIAB_TEAM_EFFORT"):
+        load()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0", False), ("false", False), ("no", False), ("1", True), ("TRUE", True), ("on", True)],
+)
+def test_log_json_flag_parsing(monkeypatch: pytest.MonkeyPatch, value: str, expected: bool) -> None:
+    monkeypatch.setenv("WIAB_TEAM_TOOL_PROVIDER", "stub")
+    monkeypatch.setenv("WIAB_TEAM_LOG_JSON", value)
+    assert load().log_json is expected
+
+
 def test_bad_log_level_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WIAB_TEAM_TOOL_PROVIDER", "stub")
     monkeypatch.setenv("WIAB_TEAM_LOG_LEVEL", "chatty")

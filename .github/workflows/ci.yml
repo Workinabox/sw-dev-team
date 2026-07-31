@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Check lints
+        run: uv run ruff check src tests
+
+      - name: Check formatting
+        run: uv run ruff format --check src tests
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run mypy
+        run: uv run mypy
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The worktree tests drive a real git repository, so the runner's git is
+      # part of the system under test. ubuntu-latest ships git >= 2.28, which
+      # `git init --initial-branch` requires.
+      - uses: actions/checkout@v4
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # `live` needs an API key and `postgres` needs a database. Neither marker is
+      # used yet; filtering now means adding such a test later cannot silently
+      # turn CI red.
+      - name: Run tests
+        run: uv run pytest -m "not live and not postgres"
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # Reports the whole package, then gates only the modules with no credential
+      # or network dependency — the analogue of the backend gating wiab-core at
+      # 98% and leaving its I/O crates ungated. The scope and threshold live in
+      # the Makefile so they are not duplicated here.
+      - name: Check coverage (core modules, 98%)
+        run: make coverage
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # hatch-vcs derives the version from the tag history, so a shallow clone
+      # would fail the build here rather than at release time.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Build wheel and sdist
+        run: uv build

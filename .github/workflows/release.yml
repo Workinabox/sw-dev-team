@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag: ${{ steps.get_tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag
+        id: get_tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release (generate notes, mark latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.get_tag.outputs.tag }}"
+          VERSION="${{ steps.get_version.outputs.version }}"
+          NOTES_FILE="${RUNNER_TEMP}/release-notes-${TAG}.md"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq .body > "$NOTES_FILE"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "Release ${VERSION}" \
+              --notes-file "$NOTES_FILE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --latest
+          else
+            gh release create "$TAG" \
+              --title "Release ${VERSION}" \
+              --notes-file "$NOTES_FILE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --latest
+          fi
+
+  build:
+    name: Build
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: hatch-vcs reads the version from the tag, so a shallow
+      # clone would produce a dev version instead of the released one.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Pinned to an exact release rather than a floating major: setup-uv
+      # publishes major tags only up to v7, so @v9 does not resolve.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      # The version is derived from the tag, so a mismatch here means the build
+      # did not see the tag — fail loudly rather than publishing a dev version.
+      - name: Verify the built version matches the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.create-release.outputs.version }}"
+          if [ ! -f "dist/wiab_team-${VERSION}-py3-none-any.whl" ]; then
+            echo "Expected dist/wiab_team-${VERSION}-py3-none-any.whl; built instead:" >&2
+            ls -1 dist >&2
+            exit 1
+          fi
+
+      # Assets keep their canonical Python filenames rather than the
+      # <name>-v<version>-<target> convention the other repos use: pip and uv
+      # parse the wheel name to resolve an install, so renaming would break it.
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in *.whl *.tar.gz; do
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  upload:
+    name: Upload
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(./dist/*)
+          if (( ${#files[@]} == 0 )); then
+            echo "No release assets found; skipping upload."
+            exit 0
+          fi
+          gh release upload "${{ needs.create-release.outputs.tag }}" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
