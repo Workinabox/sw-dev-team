@@ -38,6 +38,23 @@ class RoleConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerConfig:
+    """Which board a long-lived team pulls from, and where the code lives.
+
+    Separate from `Config` because it is only needed by `wiab-team work`; a
+    one-shot `wiab-team run` is handed everything in its payload instead.
+    """
+
+    api_url: str
+    team_id: str
+    board_id: str
+    repo_remote: str
+    base_branch: str
+    poll_interval_seconds: float
+    token: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     api_key: str | None
     tool_provider: ToolProviderKind
@@ -96,6 +113,53 @@ def _role_config(role: str, default_model: str, default_effort: str | None) -> R
             f"{prefix}_EFFORT must be one of {sorted(_EFFORT_LEVELS)}, got {effort!r}"
         )
     return RoleConfig(model=model, effort=effort)
+
+
+def load_worker() -> WorkerConfig:
+    """Resolve the worker-loop settings. Raises ConfigError on bad input.
+
+    Every field is required: a team with no board to poll or no repo to clone
+    cannot do anything, and failing at startup beats a container that sits
+    there logging "board empty" against a URL that was never set.
+    """
+    values: dict[str, str] = {}
+    for key, name in (
+        ("WIAB_TEAM_API_URL", "api_url"),
+        ("WIAB_TEAM_TEAM_ID", "team_id"),
+        ("WIAB_TEAM_BOARD_ID", "board_id"),
+        ("WIAB_TEAM_REPO_REMOTE", "repo_remote"),
+        ("WIAB_TEAM_API_TOKEN", "token"),
+    ):
+        value = _env(key)
+        if value is None:
+            raise ConfigError(f"{key} is required to run a team worker")
+        values[name] = value
+
+    interval_raw = _env("WIAB_TEAM_POLL_INTERVAL_SECONDS", "10")
+    assert interval_raw is not None
+    try:
+        interval = float(interval_raw)
+    except ValueError:
+        raise ConfigError(
+            f"WIAB_TEAM_POLL_INTERVAL_SECONDS must be a number, got {interval_raw!r}"
+        ) from None
+    if not 0.1 <= interval <= 3600:
+        raise ConfigError(
+            f"WIAB_TEAM_POLL_INTERVAL_SECONDS must be between 0.1 and 3600, got {interval}"
+        )
+
+    base_branch = _env("WIAB_TEAM_BASE_BRANCH", "main")
+    assert base_branch is not None
+
+    return WorkerConfig(
+        api_url=values["api_url"],
+        team_id=values["team_id"],
+        board_id=values["board_id"],
+        repo_remote=values["repo_remote"],
+        base_branch=base_branch,
+        poll_interval_seconds=interval,
+        token=values["token"],
+    )
 
 
 def load() -> Config:

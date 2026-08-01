@@ -7,7 +7,7 @@
 # Kept on one line: Make turns a line continuation into a space, and coverage
 # splits --include on commas without trimming, so a wrapped list silently
 # matches nothing but the first entry.
-COVERAGE_CORE = src/wiab_team/models/*,src/wiab_team/config.py,src/wiab_team/errors.py,src/wiab_team/vcs/*,src/wiab_team/graph/state.py,src/wiab_team/graph/routing.py,src/wiab_team/graph/prompts/*
+COVERAGE_CORE = src/wiab_team/models/*,src/wiab_team/config.py,src/wiab_team/errors.py,src/wiab_team/vcs/*,src/wiab_team/graph/state.py,src/wiab_team/graph/routing.py,src/wiab_team/graph/prompts/*,src/wiab_team/worker/*
 
 COVERAGE_MIN = 98
 
