@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from wiab_team import logging as team_logging
 from wiab_team.config import ToolProviderKind
 from wiab_team.config import load as load_config
+from wiab_team.config import load_worker as load_worker_config
 from wiab_team.errors import ConfigError, TeamError
 from wiab_team.models.input import TeamRunInput
 from wiab_team.models.result import RunStatus, TeamRunResult
@@ -90,6 +91,102 @@ def run(
             RunStatus.FAILED: EXIT_FAILED,
         }[result.status]
     )
+
+
+@app.command()
+def work(
+    max_issues: Annotated[
+        int,
+        typer.Option("--max-issues", help="Stop after this many issues. 0 keeps going."),
+    ] = 0,
+) -> None:
+    """Pull issues from the team's board and run them, until stopped.
+
+    This is the long-lived mode: unlike `run`, it does not exit when an issue
+    finishes — it goes back to the board.
+    """
+    try:
+        config = load_config()
+        worker_config = load_worker_config()
+    except ConfigError as exc:
+        typer.secho(f"configuration error: {exc}", fg="red", err=True)
+        raise typer.Exit(EXIT_MISCONFIGURED) from exc
+
+    team_logging.configure(level=config.log_level, json_output=config.log_json)
+
+    from wiab_team.models.input import DeliveryKind, ForgeKind
+    from wiab_team.worker import BackendClient, WorkerSettings
+    from wiab_team.worker import work as run_worker
+
+    settings = WorkerSettings(
+        api_url=worker_config.api_url,
+        team_id=worker_config.team_id,
+        board_id=worker_config.board_id,
+        repo_remote=worker_config.repo_remote,
+        base_branch=worker_config.base_branch,
+        # A team pulling from a workinabox board is working on a workinabox
+        # repo, so it delivers a pull request there. Nothing else would make
+        # sense for work the backend handed out.
+        forge=ForgeKind.WORKINABOX,
+        delivery=DeliveryKind.PR,
+        workinabox_repo_id=_repo_id_from(worker_config.repo_remote),
+        github_repo=None,
+        poll_interval_seconds=worker_config.poll_interval_seconds,
+        max_issues=max_issues,
+    )
+
+    async def go() -> int:
+        client = BackendClient(
+            api_url=worker_config.api_url,
+            team_id=worker_config.team_id,
+            token=worker_config.token,
+        )
+        stop = asyncio.Event()
+        _install_stop_handlers(stop)
+        try:
+            if not config.checkpoint_dsn:
+                return await run_worker(client, settings, config, stop=stop)
+
+            from wiab_team.checkpoint import checkpointer
+
+            async with checkpointer(config.checkpoint_dsn) as saver:
+                return await run_worker(client, settings, config, stop=stop, checkpointer=saver)
+        finally:
+            await client.aclose()
+
+    try:
+        issues = asyncio.run(go())
+    except TeamError as exc:
+        typer.secho(f"worker could not start: {exc}", fg="red", err=True)
+        raise typer.Exit(EXIT_MISCONFIGURED) from exc
+
+    print(f"\nstopped after {issues} issue(s)", file=sys.stderr)
+
+
+def _repo_id_from(remote: str) -> str | None:
+    """Recover the `R-<n>` id from a workinabox clone URL.
+
+    The backend serves repos at `<host>/repos/R-<n>.git`, and pull requests are
+    keyed on that id — so the remote already carries it and there is no second
+    setting to keep in step with the first.
+    """
+    tail = remote.rstrip("/").rsplit("/", 1)[-1]
+    name = tail.removesuffix(".git")
+    return name if name.startswith("R-") else None
+
+
+def _install_stop_handlers(stop: asyncio.Event) -> None:
+    """Stop on SIGTERM/SIGINT. The loop finishes the issue in hand first, so a
+    `docker stop` never severs a run mid-way."""
+    import contextlib
+    import signal
+
+    running = asyncio.get_running_loop()
+    for signal_number in (signal.SIGTERM, signal.SIGINT):
+        # Not every platform can install these; a team that cannot catch a
+        # signal still works, it just stops abruptly.
+        with contextlib.suppress(NotImplementedError):  # pragma: no cover - POSIX only
+            running.add_signal_handler(signal_number, stop.set)
 
 
 @app.command("validate-config")

@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from wiab_team.config import DEFAULT_MODEL, ToolProviderKind, load
+from wiab_team.config import DEFAULT_MODEL, ToolProviderKind, load, load_worker
 from wiab_team.errors import ConfigError
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -106,3 +106,54 @@ def test_git_token_is_not_in_the_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = load()
     assert cfg.git_token == "super-secret-value"
     assert "super-secret-value" not in repr(cfg)
+
+
+def _worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in (
+        ("WIAB_TEAM_API_URL", "https://wiab.example"),
+        ("WIAB_TEAM_TEAM_ID", "TM-1"),
+        ("WIAB_TEAM_BOARD_ID", "B-1"),
+        ("WIAB_TEAM_REPO_REMOTE", "https://wiab.example/repos/R-7.git"),
+        ("WIAB_TEAM_API_TOKEN", "tok"),
+    ):
+        monkeypatch.setenv(key, value)
+
+
+def test_worker_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _worker_env(monkeypatch)
+    cfg = load_worker()
+    assert cfg.board_id == "B-1"
+    assert cfg.base_branch == "main"
+    assert cfg.poll_interval_seconds == 10
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "WIAB_TEAM_API_URL",
+        "WIAB_TEAM_TEAM_ID",
+        "WIAB_TEAM_BOARD_ID",
+        "WIAB_TEAM_REPO_REMOTE",
+        "WIAB_TEAM_API_TOKEN",
+    ],
+)
+def test_worker_config_requires_every_field(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    # A team with no board or no repo can do nothing; failing at startup beats
+    # a container that logs "board empty" against a URL nobody set.
+    _worker_env(monkeypatch)
+    monkeypatch.delenv(missing)
+    with pytest.raises(ConfigError, match=missing):
+        load_worker()
+
+
+def test_worker_config_rejects_an_unusable_poll_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _worker_env(monkeypatch)
+    monkeypatch.setenv("WIAB_TEAM_POLL_INTERVAL_SECONDS", "soon")
+    with pytest.raises(ConfigError, match="must be a number"):
+        load_worker()
+
+    monkeypatch.setenv("WIAB_TEAM_POLL_INTERVAL_SECONDS", "0")
+    with pytest.raises(ConfigError, match="between"):
+        load_worker()
