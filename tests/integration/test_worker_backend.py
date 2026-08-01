@@ -204,3 +204,18 @@ async def test_a_held_task_is_joined_to_its_work() -> None:
 async def test_holding_nothing_is_none() -> None:
     respx.get(f"{API}/teams/TM-1/task").mock(return_value=httpx.Response(404))
     assert await client().held_task() is None
+
+
+def test_the_backends_certificate_is_trusted_rather_than_verification_disabled() -> None:
+    # Trusting exactly the backend's certificate beats verify=False: a team still
+    # refuses to talk to anything else.
+    import ssl
+
+    from wiab_team.tls import verification_for
+
+    assert verification_for(None) is True
+    assert verification_for("") is True
+
+    with pytest.raises(ssl.SSLError):
+        # Malformed on purpose: what matters is that it is parsed, not ignored.
+        verification_for("-----BEGIN CERTIFICATE-----\nnot-a-cert\n-----END CERTIFICATE-----\n")

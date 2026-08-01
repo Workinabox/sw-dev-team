@@ -68,6 +68,10 @@ class Config:
     log_level: str
     log_json: bool
     git_token: str | None = field(default=None, repr=False)
+    # The backend's own TLS certificate, so a self-signed one can be trusted rather than
+    # verification disabled. `None` leaves us on the system trust store. Used by everything
+    # that talks to the backend: the board client, the forge, and git.
+    api_certificate_pem: str | None = None
 
     def role(self, name: str) -> RoleConfig:
         try:
@@ -208,4 +212,5 @@ def load() -> Config:
         log_level=log_level,
         log_json=_env_flag("WIAB_TEAM_LOG_JSON", True),
         git_token=_env("WIAB_TEAM_GIT_TOKEN"),
+        api_certificate_pem=_env("WIAB_TEAM_API_CA_PEM"),
     )

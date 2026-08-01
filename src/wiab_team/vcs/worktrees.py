@@ -15,6 +15,7 @@ branch in the main clone.
 from __future__ import annotations
 
 import contextlib
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -125,8 +126,19 @@ class WorktreeManager:
         return dict(self._worktrees)
 
     async def clone(self) -> None:
-        """Clone the remote and cut the work branch off the base branch."""
+        """Clone the remote and cut the work branch off the base branch.
+
+        Starts from a clean slate. A long-lived team runs many issues in one
+        container, and the previous issue's clone is still there — cleanup only
+        removes worktrees, on the old assumption that the sandbox went away after
+        one run. Resuming does not come through here, so a checkpointed run's
+        clone is never destroyed.
+        """
         self._workspace.mkdir(parents=True, exist_ok=True)
+        for leftover in (self.repo_path, self._workspace / "worktrees"):
+            if leftover.exists():
+                log.info("clearing_previous_run", path=str(leftover))
+                shutil.rmtree(leftover, ignore_errors=True)
         await run_git(
             "clone",
             "--branch",

@@ -24,15 +24,24 @@ from typing import Any
 from wiab_team.errors import ForgeError
 from wiab_team.forge.protocol import PullRequest
 from wiab_team.logging import get_logger
+from wiab_team.tls import verification_for
 
 log = get_logger(__name__)
 
 
 class WorkinaboxForge:
-    def __init__(self, *, api_url: str, repo_id: str, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_url: str,
+        repo_id: str,
+        token: str,
+        certificate_pem: str | None = None,
+    ) -> None:
         self._api_url = api_url.rstrip("/")
         self._repo_id = repo_id
         self._token = token
+        self._certificate_pem = certificate_pem
         self._client: Any = None
 
     def _http(self) -> Any:
@@ -45,6 +54,7 @@ class WorkinaboxForge:
                     "Content-Type": "application/json",
                 },
                 timeout=30.0,
+                verify=verification_for(self._certificate_pem),
             )
         return self._client
 
