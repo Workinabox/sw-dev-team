@@ -26,6 +26,7 @@ from typing import Any
 
 from wiab_team.errors import TeamError
 from wiab_team.logging import get_logger
+from wiab_team.tls import verification_for
 
 log = get_logger(__name__)
 
@@ -52,10 +53,18 @@ class ClaimedTask:
 class BackendClient:
     """Talks to one workinabox backend as one team."""
 
-    def __init__(self, *, api_url: str, team_id: str, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_url: str,
+        team_id: str,
+        token: str,
+        certificate_pem: str | None = None,
+    ) -> None:
         self._api_url = api_url.rstrip("/")
         self._team_id = team_id
         self._token = token
+        self._certificate_pem = certificate_pem
         self._client: Any = None
 
     def _http(self) -> Any:
@@ -68,6 +77,7 @@ class BackendClient:
                     "Content-Type": "application/json",
                 },
                 timeout=DEFAULT_TIMEOUT_SECONDS,
+                verify=verification_for(self._certificate_pem),
             )
         return self._client
 

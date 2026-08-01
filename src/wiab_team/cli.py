@@ -116,6 +116,7 @@ def work(
         raise typer.Exit(EXIT_MISCONFIGURED) from exc
 
     team_logging.configure(level=config.log_level, json_output=config.log_json)
+    _trust_backend_certificate(config.api_certificate_pem, config.workspace)
 
     from wiab_team.models.input import DeliveryKind, ForgeKind
     from wiab_team.worker import BackendClient, WorkerSettings
@@ -143,6 +144,7 @@ def work(
             api_url=worker_config.api_url,
             team_id=worker_config.team_id,
             token=worker_config.token,
+            certificate_pem=config.api_certificate_pem,
         )
         stop = asyncio.Event()
         _install_stop_handlers(stop)
@@ -164,6 +166,23 @@ def work(
         raise typer.Exit(EXIT_MISCONFIGURED) from exc
 
     print(f"\nstopped after {issues} issue(s)", file=sys.stderr)
+
+
+def _trust_backend_certificate(certificate_pem: str | None, workspace: Path) -> None:
+    """Let git verify the backend too.
+
+    The HTTP client is handed the certificate directly, but cloning and pushing go through
+    git, which reads it from a file. Writing it once here covers every git call in the
+    process without threading a path through the worktree machinery.
+    """
+    if not certificate_pem:
+        return
+    import os
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    path = workspace / "backend-ca.pem"
+    path.write_text(certificate_pem, encoding="utf-8")
+    os.environ["GIT_SSL_CAINFO"] = str(path)
 
 
 def _repo_id_from(remote: str) -> str | None:

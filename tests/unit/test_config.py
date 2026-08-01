@@ -157,3 +157,12 @@ def test_worker_config_rejects_an_unusable_poll_interval(
     monkeypatch.setenv("WIAB_TEAM_POLL_INTERVAL_SECONDS", "0")
     with pytest.raises(ConfigError, match="between"):
         load_worker()
+
+
+def test_config_picks_up_the_backend_certificate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Everything that talks to the backend needs it: the board client, the forge, and git.
+    monkeypatch.setenv("WIAB_TEAM_TOOL_PROVIDER", "stub")
+    assert load().api_certificate_pem is None
+
+    monkeypatch.setenv("WIAB_TEAM_API_CA_PEM", "-----BEGIN CERTIFICATE-----\nx\n")
+    assert load().api_certificate_pem is not None

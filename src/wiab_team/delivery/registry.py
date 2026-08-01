@@ -47,6 +47,7 @@ def build_forge(payload: TeamRunInput, config: Config) -> Forge:
             api_url=repo.workinabox_api_url,
             repo_id=repo.workinabox_repo_id,
             token=config.git_token,
+            certificate_pem=config.api_certificate_pem,
         )
 
     raise ConfigError(f"cannot open a pull request with forge={repo.forge.value}")
