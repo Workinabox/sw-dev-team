@@ -31,6 +31,7 @@ EXIT_OK = 0
 EXIT_PARTIAL = 2
 EXIT_FAILED = 1
 EXIT_MISCONFIGURED = 3
+EXIT_PAUSED = 4
 
 
 @app.command()
@@ -89,6 +90,8 @@ def run(
             RunStatus.SUCCEEDED: EXIT_OK,
             RunStatus.PARTIAL: EXIT_PARTIAL,
             RunStatus.FAILED: EXIT_FAILED,
+            # A paused run is unfinished, not failed; the caller resumes it.
+            RunStatus.PAUSED: EXIT_PAUSED,
         }[result.status]
     )
 
@@ -228,6 +231,7 @@ def _summarize(result: TeamRunResult) -> None:
         RunStatus.SUCCEEDED: "green",
         RunStatus.PARTIAL: "yellow",
         RunStatus.FAILED: "red",
+        RunStatus.PAUSED: "cyan",
     }[result.status]
     print(f"\n{result.status.value}: {result.run_id}", file=sys.stderr)
     typer.secho(f"  branch: {result.work_branch or '(none)'}", fg=colour, err=True)

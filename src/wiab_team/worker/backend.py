@@ -6,6 +6,7 @@ API moves, this file is the blast radius — the same arrangement as
 
 The surface, as implemented in the backend's ``http_api.rs``::
 
+    GET  /teams/{team_id}                               -> TeamSnapshot
     POST /boards/{board_id}/tasks/claim  { "team_id" }  -> TaskSnapshot | 404
     GET  /works/{work_id}                               -> WorkSnapshot
     POST /tasks/{task_id}/start                         -> TaskSnapshot
@@ -98,6 +99,28 @@ class BackendClient:
         result: dict[str, Any] = response.json()
         return result
 
+    async def team_state(self) -> str | None:
+        """This team's lifecycle state, or `None` if the backend does not know it.
+
+        The team asks about itself rather than being told: it already polls the board, so
+        this needs no second transport, and a team that cannot reach the backend keeps
+        whatever it was doing instead of guessing.
+        """
+        team = await self._request("GET", f"/teams/{self._team_id}", allow_404=True)
+        return None if team is None else str(team["state"])
+
+    async def held_task(self) -> ClaimedTask | None:
+        """The task this team already holds, if any.
+
+        A team that was stopped mid-issue still owns its task. On restart it must pick that
+        up again rather than claim a new one, or the old task would sit `in_progress`
+        forever with nobody working on it.
+        """
+        tasks = await self._request("GET", f"/teams/{self._team_id}/task", allow_404=True)
+        if tasks is None:
+            return None
+        return await self._with_work(tasks)
+
     async def claim_next(self, board_id: str) -> ClaimedTask | None:
         """Take the next task off the board, or `None` if it is empty.
 
@@ -114,7 +137,10 @@ class BackendClient:
         )
         if task is None:
             return None
+        return await self._with_work(task)
 
+    async def _with_work(self, task: dict[str, Any]) -> ClaimedTask:
+        """Join a task to the work it points at — what the team actually needs to do."""
         task_id = str(task["id"])
         work_id = str(task["work_id"])
         work = await self._request("GET", f"/works/{work_id}")

@@ -7,6 +7,7 @@ end to end before a model is ever involved.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from tests.fixtures.git_repo import make_origin
 from wiab_team.api import run_team
 from wiab_team.config import Config, RoleConfig, ToolProviderKind
 from wiab_team.delivery.local import LocalDelivery
+from wiab_team.errors import ConfigError
 from wiab_team.models.input import RepoRef, TaskSpec, TeamRunInput
 from wiab_team.models.result import RunStatus
 from wiab_team.tools.protocol import AgentRequest, AgentResult
@@ -476,3 +478,95 @@ def test_the_dev_cap_is_the_operators_not_the_architects(max_devs: int) -> None:
     )
     assert plan is not None
     assert len(plan.work_items) == max_devs
+
+
+async def test_a_paused_run_resumes_from_its_checkpoint_instead_of_restarting(
+    tmp_path: Path,
+) -> None:
+    """Pause mid-run, then resume, and the work the first half did survives.
+
+    This is the whole point of checkpointing: resuming must not re-run the
+    architect or re-do the devs' work, because that would either duplicate
+    commits or throw them away.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    origin = await make_origin(tmp_path)
+    workspace = tmp_path / "ws"
+    saver = InMemorySaver()
+    pause = asyncio.Event()
+    calls: list[str] = []
+
+    def architect(request: AgentRequest) -> AgentResult:
+        calls.append("architect")
+        # Ask to stop as soon as the first node is done, so the pause lands
+        # partway through rather than after everything already finished.
+        pause.set()
+        return AgentResult(
+            text=plan_json(items=[{"id": "w1", "title": "One", "instruction": "do one"}]),
+            input_tokens=100,
+            output_tokens=50,
+        )
+
+    def dev(request: AgentRequest) -> AgentResult:
+        calls.append("dev")
+        return dev_writes_own_file(request)
+
+    provider = ScriptedProvider(
+        {"architect": architect, "dev": dev, "tester": lambda _: AgentResult(text="VERDICT: PASS")}
+    )
+
+    paused = await run_team(
+        payload(origin),
+        config=make_config(workspace),
+        provider=provider,
+        delivery=LocalDelivery(),
+        workspace=workspace,
+        checkpointer=saver,
+        pause=pause,
+    )
+
+    assert paused.status is RunStatus.PAUSED
+    assert calls == ["architect"], "the run stopped at the first node boundary"
+
+    # Resume on a fresh provider: the architect must not be asked again.
+    pause.clear()
+    resumed_calls: list[str] = []
+
+    def dev_again(request: AgentRequest) -> AgentResult:
+        resumed_calls.append("dev")
+        return dev_writes_own_file(request)
+
+    resumed = await run_team(
+        payload(origin),
+        config=make_config(workspace),
+        provider=ScriptedProvider(
+            {
+                "architect": lambda _: pytest.fail("the architect ran again on resume"),
+                "dev": dev_again,
+                "tester": lambda _: AgentResult(text="VERDICT: PASS"),
+            }
+        ),
+        delivery=LocalDelivery(),
+        workspace=workspace,
+        checkpointer=saver,
+        resume=True,
+    )
+
+    assert resumed_calls == ["dev"], "the pending dev work was not resumed"
+    assert resumed.status is RunStatus.SUCCEEDED
+    assert (workspace / "repo" / "dev-1.txt").exists()
+
+
+async def test_pausing_without_a_checkpointer_is_refused(tmp_path: Path) -> None:
+    # A pause nothing can resume from would just be a slower crash.
+    origin = await make_origin(tmp_path)
+    with pytest.raises(ConfigError, match="checkpointer"):
+        await run_team(
+            payload(origin),
+            config=make_config(tmp_path / "ws"),
+            provider=ScriptedProvider({}),
+            delivery=LocalDelivery(),
+            workspace=tmp_path / "ws",
+            pause=asyncio.Event(),
+        )
