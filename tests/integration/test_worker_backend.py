@@ -156,3 +156,51 @@ async def test_closing_twice_is_safe() -> None:
     await api.start("T-4")
     await api.aclose()
     await api.aclose()
+
+
+@respx.mock
+async def test_team_state_is_read_from_the_team_route() -> None:
+    respx.get(f"{API}/teams/TM-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "TM-1",
+                "organization_id": "O-1",
+                "name": "platform",
+                "description": "",
+                "board_id": "B-1",
+                "repo_id": "R-7",
+                "user_id": "U-2",
+                "vm_template": "developer",
+                "state": "paused",
+                "vm_id": "VM-1",
+            },
+        )
+    )
+    assert await client().team_state() == "paused"
+
+
+@respx.mock
+async def test_an_unknown_team_has_no_state() -> None:
+    respx.get(f"{API}/teams/TM-1").mock(return_value=httpx.Response(404))
+    assert await client().team_state() is None
+
+
+@respx.mock
+async def test_a_held_task_is_joined_to_its_work() -> None:
+    respx.get(f"{API}/teams/TM-1/task").mock(
+        return_value=httpx.Response(200, json=task_snapshot(state="in_progress"))
+    )
+    respx.get(f"{API}/works/W-3").mock(return_value=httpx.Response(200, json=work_snapshot()))
+
+    held = await client().held_task()
+
+    assert held is not None
+    assert held.task_id == "T-4"
+    assert held.title == "Add rate limiting"
+
+
+@respx.mock
+async def test_holding_nothing_is_none() -> None:
+    respx.get(f"{API}/teams/TM-1/task").mock(return_value=httpx.Response(404))
+    assert await client().held_task() is None

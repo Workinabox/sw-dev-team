@@ -75,6 +75,14 @@ class FakeBoard:
         self.reported: list[tuple[str, str, str]] = []
         self.claims = 0
         self.claim_error: Exception | None = None
+        self.state: str | None = "idle"
+        self.holds: ClaimedTask | None = None
+
+    async def team_state(self) -> str | None:
+        return self.state
+
+    async def held_task(self) -> ClaimedTask | None:
+        return self.holds
 
     async def claim_next(self, board_id: str) -> ClaimedTask | None:
         self.claims += 1
@@ -275,3 +283,138 @@ async def test_a_stop_set_before_the_first_claim_runs_nothing() -> None:
     )
     assert ran == 0
     assert board.claims == 0
+
+
+async def test_a_paused_team_takes_no_new_work() -> None:
+    board = FakeBoard([task()])
+    board.state = "paused"
+    stop = asyncio.Event()
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.01)
+        stop.set()
+
+    _, ran = await asyncio.gather(
+        stop_soon(),
+        work(
+            board,
+            settings(max_issues=0),
+            config(),
+            stop=stop,
+            run=returns(result(RunStatus.SUCCEEDED)),
+        ),
+    )
+    assert ran == 0
+    assert board.claims == 0, "a paused team must not even ask the board"
+
+
+async def test_a_paused_run_is_not_reported_and_is_picked_up_again() -> None:
+    # The team still holds the task, so reporting anything would be a lie — and
+    # escalating it would hand half-finished work to someone else.
+    board = FakeBoard([task()])
+    states = iter(["idle", "idle", "idle"])
+
+    async def next_state() -> str | None:
+        return next(states, "idle")
+
+    board.team_state = next_state  # type: ignore[method-assign]
+    resumes: list[bool] = []
+
+    async def run(payload: TeamRunInput, **kwargs: Any) -> TeamRunResult:
+        resumes.append(bool(kwargs.get("resume")))
+        # Pause the first time, finish the second.
+        if len(resumes) == 1:
+            return result(RunStatus.PAUSED)
+        return result(RunStatus.SUCCEEDED)
+
+    ran = await work(board, settings(max_issues=1), config(), run=run)
+
+    assert resumes == [False, True], "the second attempt resumed rather than restarted"
+    assert board.started == ["T-1"], "a resumed task is not started twice"
+    assert board.reported == [("T-1", "complete", "")]
+    assert ran == 1
+
+
+async def test_a_team_restarting_picks_up_the_task_it_already_holds() -> None:
+    # Otherwise the old task sits in progress forever with nobody working on it.
+    board = FakeBoard([task("T-9")])
+    board.holds = task("T-1")
+    ran = await work(
+        board, settings(max_issues=1), config(), run=returns(result(RunStatus.SUCCEEDED))
+    )
+    assert ran == 1
+    assert board.reported == [("T-1", "complete", "")]
+    assert board.claims == 0, "held work comes before anything new"
+    assert board.started == [], "a held task is already in progress"
+
+
+async def test_an_unreachable_backend_does_not_look_like_a_pause() -> None:
+    # Treating "cannot reach" as "paused" would idle a team that should be working.
+    board = FakeBoard([task()])
+
+    async def refuse() -> str | None:
+        raise BackendError("503")
+
+    board.team_state = refuse  # type: ignore[method-assign]
+    ran = await work(
+        board, settings(max_issues=1), config(), run=returns(result(RunStatus.SUCCEEDED))
+    )
+    assert ran == 1
+    assert board.reported == [("T-1", "complete", "")]
+
+
+async def test_a_pause_during_a_run_reaches_the_graph() -> None:
+    # The point of watching: a pause takes effect at the next node boundary rather
+    # than waiting for the whole issue to finish.
+    board = FakeBoard([task()])
+    states = iter(["idle"])
+    stop = asyncio.Event()
+
+    async def next_state() -> str | None:
+        # Idle for the loop's own check, then paused for the watcher.
+        return next(states, "paused")
+
+    board.team_state = next_state  # type: ignore[method-assign]
+    saw_pause = asyncio.Event()
+
+    async def run(payload: TeamRunInput, **kwargs: Any) -> TeamRunResult:
+        pause = kwargs["pause"]
+        assert pause is not None, "a checkpointed run must be pausable"
+        await asyncio.wait_for(pause.wait(), timeout=1)
+        saw_pause.set()
+        # A paused team then waits for a resume that never comes here, so end the loop.
+        stop.set()
+        return result(RunStatus.PAUSED)
+
+    await asyncio.wait_for(
+        work(board, settings(max_issues=0), config(), stop=stop, checkpointer=object(), run=run),
+        timeout=5,
+    )
+    assert saw_pause.is_set()
+    assert board.reported == [], "a paused task is not reported"
+
+
+async def test_a_run_without_a_checkpointer_is_not_given_a_pause_event() -> None:
+    # run_team refuses a pause it cannot checkpoint, so there is no point offering one.
+    board = FakeBoard([task()])
+    seen: list[object] = []
+
+    async def run(payload: TeamRunInput, **kwargs: Any) -> TeamRunResult:
+        seen.append(kwargs.get("pause"))
+        return result(RunStatus.SUCCEEDED)
+
+    await work(board, settings(max_issues=1), config(), run=run)
+    assert seen == [None]
+
+
+async def test_a_backend_that_cannot_say_what_is_held_does_not_stop_the_team() -> None:
+    board = FakeBoard([task()])
+
+    async def refuse() -> ClaimedTask | None:
+        raise BackendError("503")
+
+    board.held_task = refuse  # type: ignore[method-assign]
+    ran = await work(
+        board, settings(max_issues=1), config(), run=returns(result(RunStatus.SUCCEEDED))
+    )
+    assert ran == 1
