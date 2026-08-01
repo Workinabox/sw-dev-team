@@ -51,6 +51,8 @@ class WorkerConfig:
     repo_remote: str
     base_branch: str
     poll_interval_seconds: float
+    # Port for the read-only status endpoint. 0 turns it off.
+    status_port: int
     token: str = field(repr=False)
 
 
@@ -162,6 +164,7 @@ def load_worker() -> WorkerConfig:
         repo_remote=values["repo_remote"],
         base_branch=base_branch,
         poll_interval_seconds=interval,
+        status_port=_env_int("WIAB_TEAM_STATUS_PORT", 8081, minimum=0, maximum=65535),
         token=values["token"],
     )
 
