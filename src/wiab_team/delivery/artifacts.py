@@ -31,6 +31,7 @@ def render(result: TeamRunResult) -> str:
         RunStatus.SUCCEEDED: "✅",
         RunStatus.PARTIAL: "⚠️",
         RunStatus.FAILED: "❌",
+        RunStatus.PAUSED: "⏸️",
     }[result.status]
 
     lines = [f"# Run `{result.run_id}` — {icon} {result.status.value}", ""]

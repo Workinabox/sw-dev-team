@@ -20,6 +20,10 @@ class RunStatus(StrEnum):
     # failing after the repair budget, or an unresolved merge conflict.
     PARTIAL = "partial"
     FAILED = "failed"
+    # Stopped at a node boundary because a pause was requested. Not an outcome: the work is
+    # unfinished and the checkpoint holds exactly where it stopped, so resuming continues
+    # rather than restarting.
+    PAUSED = "paused"
 
 
 class Commit(BaseModel):

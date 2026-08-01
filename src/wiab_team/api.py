@@ -6,6 +6,7 @@ HTTP server, a queue consumer — calls ``run_team`` with a parsed payload.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from wiab_team.config import Config
 from wiab_team.config import load as load_config
 from wiab_team.delivery.artifacts import write as write_artifacts
 from wiab_team.delivery.protocol import DeliveryStrategy
+from wiab_team.errors import ConfigError
 from wiab_team.graph.builder import compile_graph
 from wiab_team.graph.context import RuntimeContext
 from wiab_team.graph.state import TeamState
@@ -38,12 +40,28 @@ async def run_team(
     delivery: DeliveryStrategy | None = None,
     checkpointer: Any | None = None,
     workspace: Path | None = None,
+    pause: asyncio.Event | None = None,
+    resume: bool = False,
 ) -> TeamRunResult:
     """Run the team to completion and return its result.
 
-    Every override exists for testing: pass a scripted provider and a temp
+    ``pause`` lets a caller stop the run at the next node boundary. The graph is
+    driven a node at a time so the event can be honoured between them, never
+    inside one: an agent turn that was cut off mid-way would leave a worktree
+    nobody can reason about, and LangGraph has no checkpoint for it either.
+    Pausing therefore costs at most one agent turn.
+
+    ``resume`` continues a previously paused run from its checkpoint instead of
+    starting over. It requires a checkpointer — without one there is nothing to
+    continue from.
+
+    Every other override exists for testing: pass a scripted provider and a temp
     workspace and the whole graph runs with no API key and no network.
     """
+    if checkpointer is None and (pause is not None or resume):
+        # Both read the checkpoint: pausing to record where it stopped, resuming to pick it
+        # up. A pause nothing can resume from would just be a slower crash.
+        raise ConfigError("pausing and resuming both need a checkpointer")
     config = config or load_config()
     workspace = workspace or config.workspace
     provider = provider or build_provider(config)
@@ -63,18 +81,28 @@ async def run_team(
         base_branch=payload.repo.base_branch,
         token=config.git_token,
     )
+    if resume:
+        # A resumed run gets a fresh manager, but the first half's worktrees are still on
+        # disk. Without adopting them every dev would find nothing prepared and give up.
+        await worktrees.adopt_existing()
     ctx = RuntimeContext(config=config, provider=provider, worktrees=worktrees, delivery=delivery)
 
     graph = compile_graph(ctx, checkpointer=checkpointer)
-    initial: TeamState = {"input": payload}
+    # Resuming passes no input: LangGraph continues from the checkpoint, and handing it a
+    # fresh state would overwrite what the run had already established.
+    initial: TeamState | None = None if resume else {"input": payload}
     run_config = {
         "recursion_limit": RECURSION_LIMIT,
         "configurable": {"thread_id": payload.run_id},
     }
 
     try:
-        final: TeamState = await graph.ainvoke(initial, config=run_config)
+        final, paused = await _drive(graph, initial, run_config, pause=pause, resume=resume)
         result = to_result(payload, final)
+        if paused:
+            # The work is unfinished and the checkpoint holds where it stopped, so the
+            # status must not read as an outcome.
+            result = result.model_copy(update={"status": RunStatus.PAUSED})
     except Exception as exc:
         log.exception("run_crashed", run_id=payload.run_id)
         result = TeamRunResult(
@@ -87,6 +115,43 @@ async def run_team(
 
     write_artifacts(result, workspace)
     return result
+
+
+async def _drive(
+    graph: Any,
+    initial: TeamState | None,
+    run_config: dict[str, Any],
+    *,
+    pause: asyncio.Event | None,
+    resume: bool,
+) -> tuple[TeamState, bool]:
+    """Run the graph a node at a time, stopping early if a pause is requested.
+
+    Returns the final state and whether it stopped short. With no pause event this is
+    `ainvoke` with extra steps, so the fast path stays the simple one.
+    """
+    if resume:
+        # What the checkpoint still has pending. Logged because a resume that picks up
+        # nothing looks identical to a clean finish in the result.
+        snapshot = await graph.aget_state(run_config)
+        log.info("run_resuming", next_nodes=list(snapshot.next))
+
+    if pause is None:
+        state: TeamState = await graph.ainvoke(initial, config=run_config)
+        return state, False
+
+    async for _ in graph.astream(initial, config=run_config, stream_mode="updates"):
+        if pause.is_set():
+            # The state is whatever the checkpoint now holds — read it back rather than
+            # assembling a partial one from the stream.
+            snapshot = await graph.aget_state(run_config)
+            # `next` is what resuming will pick up. Logging it makes a pause that stopped
+            # with nothing pending visible, instead of looking like a clean finish later.
+            log.info("run_paused", resumed=resume, next_nodes=list(snapshot.next))
+            return snapshot.values, True
+
+    snapshot = await graph.aget_state(run_config)
+    return snapshot.values, False
 
 
 def to_result(payload: TeamRunInput, state: TeamState) -> TeamRunResult:

@@ -19,12 +19,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from wiab_team.errors import GitError
+from wiab_team.logging import get_logger
 from wiab_team.models.result import Commit
 from wiab_team.vcs.git import authenticated_remote, redact, run_git
 
 # Identity for commits this system creates. Agents don't get to choose it.
 BOT_NAME = "workinabox agent team"
 BOT_EMAIL = "agents@workinabox.local"
+
+log = get_logger(__name__)
 
 BRANCH_PREFIX = "wiab"
 
@@ -88,6 +91,37 @@ class WorktreeManager:
 
     @property
     def worktrees(self) -> dict[int, Worktree]:
+        return dict(self._worktrees)
+
+    async def adopt_existing(self) -> dict[int, Worktree]:
+        """Rediscover this run's worktrees from the clone on disk.
+
+        The manager holds its worktrees in memory, but a resumed run gets a new
+        manager while the worktrees themselves are still on disk. Without this,
+        every dev on a resumed run would find nothing prepared and give up —
+        which is exactly what happened before it existed.
+
+        Only this run's branches are adopted; another run's worktrees under the
+        same workspace are none of our business.
+        """
+        if not self.repo_path.exists():
+            return {}
+        listing = (await run_git("worktree", "list", "--porcelain", cwd=self.repo_path)).stdout
+        prefix = f"{BRANCH_PREFIX}/{self._run_id}-dev-"
+        path: Path | None = None
+        for line in listing.splitlines():
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree ").strip())
+            elif line.startswith("branch ") and path is not None:
+                branch = line.removeprefix("branch ").strip().removeprefix("refs/heads/")
+                if branch.startswith(prefix):
+                    suffix = branch.removeprefix(prefix)
+                    if suffix.isdigit():
+                        index = int(suffix)
+                        self._worktrees[index] = Worktree(index=index, branch=branch, path=path)
+                path = None
+        if self._worktrees:
+            log.info("worktrees_adopted", indexes=sorted(self._worktrees))
         return dict(self._worktrees)
 
     async def clone(self) -> None:
