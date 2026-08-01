@@ -23,6 +23,7 @@ from wiab_team.logging import get_logger
 from wiab_team.models.input import DeliveryKind, ForgeKind, RepoRef, TaskSpec, TeamRunInput
 from wiab_team.models.result import RunStatus, TeamRunResult
 from wiab_team.worker.backend import BackendError, ClaimedTask
+from wiab_team.worker.status import WorkerStatus
 
 log = get_logger(__name__)
 
@@ -100,6 +101,7 @@ async def work(
     stop: asyncio.Event | None = None,
     checkpointer: Any | None = None,
     run: Any | None = None,
+    status: WorkerStatus | None = None,
 ) -> int:
     """Pull issues until asked to stop. Returns how many were run.
 
@@ -134,6 +136,8 @@ async def work(
 
         if paused:
             log.debug("team_paused", team_id=settings.team_id)
+            if status is not None:
+                status.waiting(paused=True)
             await _sleep_or_stop(settings.poll_interval_seconds, stop)
             continue
 
@@ -151,11 +155,22 @@ async def work(
 
         if task is None:
             log.debug("board_empty", board_id=settings.board_id)
+            if status is not None:
+                status.waiting()
             await _sleep_or_stop(settings.poll_interval_seconds, stop)
             continue
 
+        if status is not None:
+            status.working(task.task_id, task.title)
         paused_run = await _run_one(
-            board, task, settings, config, checkpointer=checkpointer, run=run, resume=resume
+            board,
+            task,
+            settings,
+            config,
+            checkpointer=checkpointer,
+            run=run,
+            resume=resume,
+            status=status,
         )
         if paused_run:
             # The team still holds the task and the checkpoint holds the run. Pick it up
@@ -180,6 +195,7 @@ async def _run_one(
     checkpointer: Any | None,
     run: Any,
     resume: bool = False,
+    status: WorkerStatus | None = None,
 ) -> bool:
     """Run one issue and report it, whatever happens.
 
@@ -247,6 +263,11 @@ async def _run_one(
         await _report(board.fail, task.task_id, result.error or "the run failed")
 
     log.info("task_reported", task_id=task.task_id, status=result.status.value)
+    if status is not None:
+        status.finished(
+            "completed" if result.status is RunStatus.SUCCEEDED else result.status.value,
+            result.error,
+        )
     return False
 
 

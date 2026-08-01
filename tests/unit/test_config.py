@@ -125,6 +125,13 @@ def test_worker_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.board_id == "B-1"
     assert cfg.base_branch == "main"
     assert cfg.poll_interval_seconds == 10
+    assert cfg.status_port == 8081
+
+
+def test_the_status_endpoint_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    _worker_env(monkeypatch)
+    monkeypatch.setenv("WIAB_TEAM_STATUS_PORT", "0")
+    assert load_worker().status_port == 0
 
 
 @pytest.mark.parametrize(

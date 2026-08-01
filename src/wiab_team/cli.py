@@ -121,6 +121,7 @@ def work(
     from wiab_team.models.input import DeliveryKind, ForgeKind
     from wiab_team.worker import BackendClient, WorkerSettings
     from wiab_team.worker import work as run_worker
+    from wiab_team.worker.status import WorkerStatus
 
     settings = WorkerSettings(
         api_url=worker_config.api_url,
@@ -139,6 +140,12 @@ def work(
         max_issues=max_issues,
     )
 
+    status = WorkerStatus(team_id=worker_config.team_id, board_id=worker_config.board_id)
+    if worker_config.status_port:
+        from wiab_team.worker.status import serve as serve_status
+
+        serve_status(status, worker_config.status_port)
+
     async def go() -> int:
         client = BackendClient(
             api_url=worker_config.api_url,
@@ -150,12 +157,14 @@ def work(
         _install_stop_handlers(stop)
         try:
             if not config.checkpoint_dsn:
-                return await run_worker(client, settings, config, stop=stop)
+                return await run_worker(client, settings, config, stop=stop, status=status)
 
             from wiab_team.checkpoint import checkpointer
 
             async with checkpointer(config.checkpoint_dsn) as saver:
-                return await run_worker(client, settings, config, stop=stop, checkpointer=saver)
+                return await run_worker(
+                    client, settings, config, stop=stop, checkpointer=saver, status=status
+                )
         finally:
             await client.aclose()
 
